@@ -18,6 +18,7 @@ output:
 
 ## load libs
 ```{r warning=FALSE, message=FALSE}
+library("kableExtra")
 library("tidyverse")
 ```
 
@@ -35,7 +36,7 @@ theme_set(
 
 ## load raw data
 ```{r warning=FALSE, message=FALSE}
-path.data <- file.path("~", "Downloads", "mia1_submissions")
+path.data <- file.path("~", "Documents", "Psych45", "mia1")
 
 df.sternberg <- path.data %>% 
   list.files(pattern = ".*sternberg.*csv",
@@ -81,6 +82,7 @@ df.nback <- path.data %>%
 df.sternberg %>% 
   group_by(subject_id) %>% 
   summarise(mean_acc = mean(acc)) %>% 
+  filter(mean_acc > 0) %>% 
   ggplot(mapping = aes(x = "Sternberg",
                        y = mean_acc)) +
   geom_jitter(width = 0.2,
@@ -90,8 +92,8 @@ df.sternberg %>%
   stat_summary(fun.data = "mean_cl_boot",
                color = "blue",
                size = 1) +
-  labs(title = "Sternberg Task - Psych 45 Students - Spring 2024",
-       subtitle = paste0("(N = ", df.sternberg %>% pull(subject_id) %>% unique %>% length, ")"),
+  labs(title = "Sternberg Task - Psych 45 Students - Spring 2025",
+       subtitle = paste0("(N = ", df.sternberg %>% group_by(subject_id) %>% summarise(mean_acc = mean(acc)) %>% filter(mean_acc > 0) %>% ungroup() %>% pull(subject_id) %>% unique %>% length, ")"),
        x = "",
        y = "Proportion correct")
 ```
@@ -114,7 +116,7 @@ df.nback %>%
   stat_summary(fun.data = "mean_cl_boot",
                color = "black",
                size = 1) +
-  labs(title = "N-Back Task - Psych 45 Students - Spring 2024",
+  labs(title = "N-Back Task - Psych 45 Students - Spring 2025",
        subtitle = paste0("(N = ", df.nback %>% pull(subject_id) %>% unique %>% length, ")"),
        x = "",
        y = "Proportion correct") +
@@ -125,15 +127,61 @@ df.nback %>%
 ```{r fig.width=10, fig.height=8}
 df.nback %>% 
   ggplot(mapping = aes(x = acc_labs,
-                       y = lnrt,
+                       y = rt,
                        color = phase)) +
+  geom_jitter(width = 0.2,
+              height = 0,
+              alpha = 0.1,
+              size = 1) +
   stat_summary(fun.data = "mean_cl_boot",
+               color = "black",
                size = 1) +
-  labs(title = "N-Back Task - Psych 45 Students - Spring 2024",
+  labs(title = "N-Back Task - Psych 45 Students - Spring 2025",
        subtitle = paste0("(N = ", df.nback %>% pull(subject_id) %>% unique %>% length, ")"),
        x = "",
-       y = "ln(RT)") +
+       y = "Reaction time (ms)") +
   facet_grid(rows = ~phase) +
   scale_color_brewer(palette = "Set1")
+```
+
+<!-- ## missing data checks (for completion-based credit) -->
+```{r echo=FALSE, include=FALSE}
+path.data %>% 
+  list.files(pattern = ".*sternberg.*csv",
+             full.names = TRUE) %>% 
+  read_csv(show_col_types = FALSE) %>% 
+  filter(!is.na(response_type)) %>% 
+  group_by(subject_id) %>%
+  summarise(nil_resps = sum(response_type == "NO_RESPONSE")) %>%
+  mutate(prop_missing = nil_resps / 20) %>% 
+  arrange(desc(nil_resps)) %>% 
+  kable()
+
+path.data %>% 
+  list.files(pattern = ".*nback.*csv",
+             full.names = TRUE) %>% 
+  read_csv(show_col_types = FALSE) %>% 
+  filter(!exclude_trial) %>% 
+  filter(phase != "fixation") %>% 
+  filter(!is.na(response_type)) %>% 
+  group_by(subject_id, phase) %>%
+  summarise(nil_resps = sum(response_type == "NO_RESPONSE")) %>%
+  mutate(
+    expected_num_resp_trials = case_when(
+      phase == "1back" ~ 19,
+      phase == "2back" ~ 18,
+      phase == "3back" ~ 17,
+      phase == "4back" ~ 16,
+      TRUE ~ -1
+    )
+  ) %>% 
+  mutate(prop_missing = nil_resps / expected_num_resp_trials) %>%
+  group_by(subject_id) %>% 
+  summarise(
+    total_nil_resps = sum(nil_resps),
+    avg_nil_resps = mean(prop_missing)
+  ) %>% 
+  arrange(desc(avg_nil_resps)) %>% 
+  kable()
 ```
 
