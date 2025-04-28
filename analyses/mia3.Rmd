@@ -1,0 +1,183 @@
+---
+title: "mia 3 - results"
+author: "shawn schwartz"
+date: "`r tolower(format(Sys.time(), '%A %B %d, %Y @ %X'))`"
+output: 
+  html_document:
+    highlight: tango
+    theme: cosmo
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+    toc_depth: 4
+    number_sections: true
+---
+
+# event boundaries task
+
+## load libs
+```{r warning=FALSE, message=FALSE}
+library("tidyverse")
+```
+
+## plot settings
+```{r}
+txt <- element_text(size = 30, family = "Avenir", color = "black")
+
+theme_set(
+  theme_classic() +
+    theme(legend.position = "none",
+          text = txt,
+          axis.text = txt)
+)
+```
+
+## load raw data
+```{r warning=FALSE, message=FALSE}
+path.data <- file.path("~", "Downloads", "mia3_submissions")
+
+df.eb <- path.data |> 
+  list.files(pattern = "*.csv",
+             full.names = TRUE) |> 
+  read_csv(show_col_types = FALSE) |> 
+  filter(trial_index == 7)
+```
+
+## extract responses
+```{r}
+extract_response_timestamps <- function(data) {
+  data |> 
+    mutate(
+      button_times = map(response_times, function(x) {
+        if (is.na(x)) return(NULL)
+        
+        times <- str_remove_all(x, "\\[|\\]") |> 
+          str_split(",") |> 
+          unlist() |> 
+          as.numeric()
+        
+        return(times)
+      })
+    ) |> 
+    select(subject_id, button_times) |> 
+    unnest(button_times) |> 
+    mutate(button_times_sec = button_times / 1000)
+}
+```
+
+## kde estimation per subject
+```{r}
+kde_per_subj <- function(button_df, bandwidth = 1) {
+  max_time <- max(button_df$button_times_sec, na.rm = TRUE)
+  
+  time_grid <- seq(0, max_time, by = 0.1) # i.e., 0.1s intervals
+  
+  all_densities <- list()
+  
+  subjects <- unique(button_df$subject_id)
+  
+  for (subject in subjects) {
+    subj_data <- button_df |> 
+      filter(subject_id == subject)
+    
+    if (nrow(subj_data) > 0) {
+      kde <- density(subj_data$button_times_sec,
+                     bw = bandwidth,
+                     from = 0, to = max_time,
+                     n = length(time_grid))
+      
+      subj_density_df <- data.frame(
+        subject_id = subject,
+        time = kde$x,
+        density = kde$y
+      )
+      
+      all_densities[[subject]] <- subj_density_df
+    }
+  }
+  
+  return(bind_rows(all_densities))
+}
+
+agg_densities <- function(all_densities_df) {
+  # aggregated across all subjects
+  agg_density <- all_densities_df |> 
+    group_by(time) |> 
+    summarize(mean_density = mean(density, na.rm = TRUE)) |> 
+    ungroup()
+  
+  # normalized aggregated density
+  max_density <- max(agg_density$mean_density, na.rm = TRUE)
+  agg_density <- agg_density |> 
+    mutate(
+      normalized_density = mean_density / max_density
+    )
+  
+  # descriptive stats
+  mean_density <- mean(agg_density$normalized_density, na.rm = TRUE)
+  sd_density <- sd(agg_density$normalized_density, na.rm = TRUE)
+  
+  # find peaks in dist above 0.5 threshold
+  # i.e., peak if greater than both its neighbors
+  agg_density <- agg_density |> 
+    mutate(
+      is_peak = normalized_density > 0.5 &
+                lead(normalized_density, default = 0) < normalized_density &
+                lag(normalized_density, default = 0) < normalized_density
+    )
+  
+  event_boundaries <- agg_density |> 
+    filter(is_peak) |> 
+    select(time, normalized_density)
+  
+  return(list(
+    agg_density = agg_density,
+    event_boundaries = event_boundaries,
+    mean = mean_density,
+    sd = sd_density
+  ))
+}
+```
+
+## run and plot
+```{r fig.width=16, fig.height=6, warning=FALSE}
+set.seed(100)
+
+df.resps <- df.eb |> extract_response_timestamps()
+df.all_densities <- df.resps |> drop_na(button_times_sec) |> kde_per_subj()
+df.agg_density <- df.all_densities |> agg_densities()
+
+ggplot() +
+  geom_line(
+    data = df.all_densities,
+    aes(x = time, y = density, group = subject_id),
+    color = "lightgray", alpha = 0.5
+  ) +
+  geom_line(
+    data = df.agg_density$agg_density,
+    aes(x = time, y = normalized_density * max(df.all_densities$density)),
+    color = "red", size = 1
+  ) +
+  geom_vline(
+    data = df.agg_density$event_boundaries,
+    aes(xintercept = time),
+    linetype = "dashed", color = "blue"
+  ) +
+  geom_text(
+    data = df.agg_density$event_boundaries,
+    aes(x = time, y = 0.025, label = paste0(round(time, 1), "s")),
+    vjust = -0.25, angle = 90, size = 3.5
+  ) +
+  labs(
+    title = "P45 Spring '25: Students' event segmentation responses",
+    subtitle = "Event boundaries (prob > 0.5)",
+    x = "Video Time (seconds, out of 5 mins)",
+    y = "Density"
+  )
+
+ggsave(
+  file.path("~", "Downloads", "eb_mia3_results.jpg"),
+  width = 16, height = 6, dpi = 300
+)
+```
